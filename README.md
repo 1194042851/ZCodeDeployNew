@@ -1,192 +1,182 @@
 # ZCode-Deploy
 
-ZCode 人格部署工具 — 一键把 system prompt 整层换成你自己的越狱词。
+一个修改本机 ZCode 客户端 `zcode.cjs` 的工具，用 `人格.txt` 接管 system prompt 的主要注入入口。
 
-> **本仓库是 [zzooymc-source/ZCode-Deploy](https://github.com/zzooymc-source/ZCode-Deploy) 的修改版（fork）。**
-> 原项目提供了 ZCode system prompt 替换的原始实现；本仓库修复了
-> ZCode 2026-09-19 重新打包后补丁全部失效的问题，并补齐了校验与发布流程。
+本仓库同时提供两套部署脚本：
 
-## 这是什么
+| 平台 | 入口 | 补丁策略 | 当前状态 |
+|---|---|---|---|
+| Ubuntu / Linux | `deploy-linux.js`、`deploy-linux.sh` | 2 个补丁，保留会话初始化所需片段 | 已在 ZCode 3.17.2 Linux 版验证 |
+| Windows | `deploy.ps1`、`.bat` | 6 个补丁，完整移除各类注入片段 | 来自上游 v2，需按目标版本自行验证 |
 
-针对 ZCode 的 system prompt 替换工具。
+> 本仓库 fork 自 [zzooymc-source/ZCode-Deploy](https://github.com/zzooymc-source/ZCode-Deploy)。原项目定位了 `customSystemPrompt` 注入点；后续版本补齐了语义锚点、失败即中止、语法校验和备份轮转，本仓库再补充 Ubuntu 适配。
 
-ZCode 的 system prompt 由 `zcode.cjs` 拼装，包含产品身份声明（"You are ZCode"）、
-安全策略、上下文管理规则、日期提醒等注入内容。本工具修改这些注入点，
-把整个 system 层替换为 `人格.txt` 的内容 —— 你的词直接成为唯一的 system prompt。
+---
 
-部署后模型收到的请求：
+## 1. 快速开始
 
-```
-system:   人格.txt（唯一）
-messages: 正常对话
-tools:    工具定义（不变）
+### Ubuntu / Linux（推荐用于本机）
 
-不含 "You are ZCode"
-不含产品安全策略
-不含上下文管理规则
-不含日期提醒
-不含 Skills 列表
-```
-
-## 使用
-
-### Ubuntu / Linux（本机已适配）
-
-1. （可选）把 `人格.txt` 换成你自己的词（UTF-8）
-2. 在 `ZCode-Deploy/` 目录下执行 `./deploy-linux.sh install`
-3. 重启 ZCode，开新对话生效
+环境要求：Node.js 可运行 `node --check`；对 `/opt/ZCode` 写入时可能需要 sudo。
 
 ```bash
 cd ZCode-Deploy
-./deploy-linux.sh install    # 部署（写入 /opt 时可能需要 sudo）
-./deploy-linux.sh status     # 查看状态
-./deploy-linux.sh verify     # 功能验证
-./deploy-linux.sh restore    # 恢复原版
-./deploy-linux.sh diag       # 注入点诊断
+./deploy-linux.sh install
 ```
 
-也可直接调用 Node 入口：
+然后**重启 ZCode，新建对话**（旧会话可能保留旧状态）。首次写入系统目录时，脚本会提示 sudo；无人值守场景可设置 `SUDO_PASSWORD`。
+
+常用命令：
+
+```bash
+./deploy-linux.sh install    # 部署
+./deploy-linux.sh status     # 查看当前 cjs 是否已打补丁
+./deploy-linux.sh verify     # 验证人格入口与会话结构
+./deploy-linux.sh diag       # 列出 zcode.cjs 的注入片段
+./deploy-linux.sh restore    # 从 zcode.cjs.bak 还原原版
+```
+
+也可以直接调用 Node 入口：
 
 ```bash
 node deploy-linux.js install
 ```
 
-Linux 版会按 `ZCODE_DIR` / `ZCODE_CJS` / `ZCODE_PERSONA` 定位目标和人格文件，
-默认探测 `/opt/ZCode/resources/glm/zcode.cjs`。写入系统安装目录时可通过
-`SUDO_PASSWORD` 提供 sudo 密码，或让脚本交互提示。原版会归档到 `backups/`
-并刷新 `zcode.cjs.bak`；这些备份文件不会入库。
+脚本默认按以下顺序定位文件：
 
-**重要兼容性说明**：本机 ZCode 3.17.2（Linux）在恢复会话时依赖 Current Date /
-Skills / Request User Context 三个片段的结构。Windows v2 的六补丁版本会把
-这些函数直接改成 `return null;`，实测导致 `Cannot read properties of null
-(reading 'length')`，界面显示「初始化失败，暂时无法发送」。因此 Linux 版只做
-两个补丁：清空 CLI Prefix 产品身份声明 + 把 `customSystemPrompt` 指向
-`人格.txt`。后者仍会让 ZCode 跳过 System Context / Environment Info / Memory /
-Agent Identity 等大部分注入，但保留了会话初始化所需结构。
+| 变量 | 默认值 / 回退逻辑 |
+|---|---|
+| `ZCODE_DIR` | 探测 `/opt/ZCode`、`/usr/lib/ZCode`、`~/.local/share/ZCode` 等 |
+| `ZCODE_CJS` | `$ZCODE_DIR/resources/glm/zcode.cjs` |
+| `ZCODE_PERSONA` | 脚本同目录的 `人格.txt` |
+| `SUDO_PASSWORD` | 未设置时走交互式 sudo |
 
 ### Windows
 
-1. （可选）把 `人格.txt` 换成你自己的词（UTF-8）
-2. 双击 `部署.bat`
-3. 开新对话，生效
-
-命令行方式：
-
 ```powershell
-powershell -ExecutionPolicy Bypass -File deploy.ps1 install    # 部署
-powershell -ExecutionPolicy Bypass -File deploy.ps1 restore    # 恢复原版
-powershell -ExecutionPolicy Bypass -File deploy.ps1 status     # 查看状态
-powershell -ExecutionPolicy Bypass -File deploy.ps1 diag       # 注入点诊断
+powershell -ExecutionPolicy Bypass -File deploy.ps1 install
+powershell -ExecutionPolicy Bypass -File deploy.ps1 restore
+powershell -ExecutionPolicy Bypass -File deploy.ps1 status
+powershell -ExecutionPolicy Bypass -File deploy.ps1 diag
 ```
 
-## 换人格
+或双击 `部署.bat` / `恢复.bat` / `查看状态.bat` / `验证.bat`。`deploy.ps1` 含中文，必须保持 **UTF-8 with BOM**。
 
-直接编辑 `人格.txt`，保存，开新对话生效。不需要重启，不需要重跑部署。
+---
 
-## 原理
+## 2. 人格文件
 
-对 `zcode.cjs` 做六个补丁。**锚点按语义字面量定位，不依赖压缩后的变量名**，
-所以 ZCode 更新重命名内部变量后依然有效：
+[`ZCode-Deploy/人格.txt`](ZCode-Deploy/人格.txt) 是唯一需要日常编辑的文件，UTF-8 编码。脚本会把它的**绝对路径**写进 `zcode.cjs`。
 
-| # | 定位锚点（稳定字面量） | 修改内容 | 作用 |
-|---|------------------------|----------|------|
-| 1 | `"You are ZCode, an interactive coding agent"` | 赋值改为空串 | 删除产品身份声明 |
-| 2 | `this.config.customSystemPrompt?.trim()` | 改为 `readFileSync(人格.txt)` | system prompt 换成外部文件 |
-| 3 | `name:"Agent Identity",source:"identity"` | 所在函数改读外部文件 | Agent Identity 片段同步替换 |
-| 4 | `name:"Current Date",source:"current_date"` | 所在函数开头插 `return null;` | 移除日期提醒注入 |
-| 5 | `name:"Skills",source:"skills"` | 同上 | 移除 Skills 列表注入 |
-| 6 | `name:"Request User Context"` | 同上 | 移除 User Context 注入 |
+- 只改内容：保存后开新对话即可，不需要重跑部署。
+- 移动项目目录：必须重跑 `install`，因为路径已写死。
+- ZCode 升级覆盖 `zcode.cjs`：必须重跑 `install`。
+- 想恢复原版：执行 `restore`（Linux）或 `恢复.bat`（Windows）。
 
-定位方式：找到锚点字面量后，用**花括号配平**回溯出真正包住它的那个函数，再对其动手。
-这样即使 ZCode 把 `Djo` 改名成 `FVs`、把 `Eut` 改名成 `Qfn`，补丁照样命中。
+---
 
-补丁 2 利用产品自带的 `customSystemPrompt` 入口。ZCode 在设置了该入口时会自动跳过
-System Context / Environment Info / Memory 等片段，所以一个补丁就清掉了大半注入。
+## 3. 两套补丁的区别
 
-## 安全设计（v2）
+### Linux 版：2 个补丁
 
-| 机制 | 说明 |
-|------|------|
-| 失败即中止 | 任一补丁未命中就**不写入**，退出码 1，并打印注入点诊断 |
-| 语法校验 | 写入前用 `node --check` 校验补丁结果，不通过绝不落盘 |
-| 原子性 | 校验通过才覆盖 `zcode.cjs`；原文件在被覆盖前已归档 |
-| 幂等 | 重复跑 install 全部报「跳过」，不会重复注入 |
-| 备份轮转 | 每次操作把当前文件归档到 `backups` 目录，保留最近 6 份 |
-| 备份保鲜 | ZCode 更新后 `.bak` 自动刷新为新版原版，**restore 不会再降级应用** |
-
-## 验证
-
-两步，都很快：
-
-```
-验证.bat
-```
-
-它会做两件事：
-
-1. `deploy.ps1 diag` —— 列出 cjs 里全部 10 个注入片段及其产物函数
-2. `verify-patch.cjs` —— **真正执行**补丁后的函数，确认：
-   - 注入的读取表达式确实读得到 `人格.txt`
-   - 日期 / Skills / User Context 三个函数实际返回 `null`
-   - CLI Prefix 实际返回空串
-   - Agent Identity 的 content 就是 `人格.txt` 全文
-
-也可以直接看 ZCode 的模型请求日志：
-
-```
-%USERPROFILE%\.zcode\cli\rollout\model-io-*.jsonl
-```
-
-检查点：system 层应为 `人格.txt` 全文，且不含 `You are ZCode`、不含安全策略、不含日期提醒。
-
-## 注意
-
-- **ZCode 更新后**：重跑 `部署.bat` 即可。更新会覆盖 `zcode.cjs`，脚本会自动识别新版原版、
-  刷新备份、重新打补丁。如果新版连注入点结构都变了，脚本会**明确报错并给出诊断**，
-  不会再像旧版那样「静默无效果」。
-- **文件夹移动后**：需要重跑 `部署.bat`（人格文件路径写死在 cjs 里）。
-- **`deploy.ps1` 必须保持 UTF-8 with BOM 编码**。它含中文，而 Windows PowerShell 5.1 对无 BOM 的
-  脚本按系统 ANSI（GBK）解码，会把中文字节连同后面的引号一起吃掉并报 `Unexpected token` 语法错。
-  用 VS Code 改脚本时请设置 `"files.encoding": "utf8bom"`。
-- **安装路径检测**：优先用运行中的 ZCode 进程路径，其次 `ZCODE_DIR` 环境变量，
-  其次常见位置（含 `D:\app\zcode`），最后扫盘。检测结果缓存到 `zcode-dir.txt`。
-- 仅修改本地安装的软件，不触碰服务端。
-
-## 文件说明
-
-```
-部署.bat            Windows 一键部署
-恢复.bat            Windows 恢复原版
-查看状态.bat        Windows 查状态
-验证.bat            Windows 诊断 + 功能验证
-deploy.ps1          Windows 主脚本（install / restore / status / diag）
-verify-patch.cjs    Windows 版功能验证器（检查六补丁）
-deploy-linux.js     Ubuntu / Linux 主脚本（install / restore / status / diag / verify）
-deploy-linux.sh     Ubuntu / Linux 一键入口
-人格.txt            人格文件（唯一编辑入口）
-backups             原版归档目录（保留最近 7 份，不入库）
-zcode-dir.txt       上次检测到的 ZCode 目录缓存（不入库）
-修改记录.md         完整技术分析与变更记录
-```
-
-## 来源与致谢
-
-本仓库是 **[zzooymc-source/ZCode-Deploy](https://github.com/zzooymc-source/ZCode-Deploy)** 的修改版，原仓库地址：
-https://github.com/zzooymc-source/ZCode-Deploy
-
-原项目完成了基础工作：定位 ZCode 的 system prompt 拼装入口、发现 `customSystemPrompt`
-这个产品自带的合法注入点、验证整层替换的可行性。本仓库在其之上做了以下改动：
-
-| | 原仓库 v1 | 本仓库 v2.0.0 |
+| # | 修改 | 作用 |
 |---|---|---|
-| 补丁锚点 | 压缩变量名硬编码（`Djo` / `Eut` / `fre` …） | 语义字面量 + 花括号配平定位 |
-| 补丁未命中 | 黄色警告，仍然写入并报「部署完成」 | 中止、退出码 1、打印注入点诊断 |
-| 写入前校验 | 无 | `node --check` 语法门禁，不通过不落盘 |
-| 备份策略 | `.bak` 固定为首次部署版本 | 自动刷新，restore 不再降级应用 |
-| 验证手段 | 人工翻模型请求日志 | `verify-patch.cjs` 真正执行补丁后的函数 |
-| 发布流程 | 手动打包 | `build-release.ps1` 白名单打包 + SHA256 清单 |
-| Ubuntu / Linux | 未支持 | `deploy-linux.js` / `deploy-linux.sh`，双补丁保留会话初始化结构 |
+| 1 | CLI Prefix 的产品身份声明置空 | 去掉 `You are ZCode` 前缀 |
+| 2 | `ContextBuilder.build()` 的 `customSystemPrompt` 改为 `readFileSync(人格.txt)` | 让 `人格.txt` 成为主要 system 内容 |
+
+ZCode 在 `customSystemPrompt` 有值时，会自行跳过 System Context / Environment Info / Memory / Agent Identity 等大部分分支，因此不需要逐个清空片段函数。
+
+**为什么不做 6 补丁**：实测 ZCode 3.17.2 Linux 版在恢复会话时依赖 `Current Date` / `Skills` / `Request User Context` 三个片段的结构。把它们改成 `return null;` 后，客户端报：
+
+```text
+Cannot read properties of null (reading 'length')
+```
+
+界面显示「初始化失败，暂时无法发送」。Linux 版因此保留这些函数结构，只替换主要 system 入口；代价是日期 / Skills / User Context 等元数据片段仍可能存在，效果不等于 Windows 六补丁版本的“整层清空”。
+
+### Windows 版：6 个补丁
+
+上游 v2 用语义字面量 + 花括号配平定位函数，覆盖：
+
+1. CLI Prefix 身份声明
+2. `customSystemPrompt`
+3. Agent Identity
+4. Current Date
+5. Skills
+6. Request User Context
+
+这套逻辑针对 Windows 打包版本整理；不同 ZCode 版本的压缩变量名、身份声明文案、片段结构都可能变化。任一锚点未命中时脚本会中止并打印诊断，不会静默写入。
+
+---
+
+## 4. 安全与恢复
+
+两套脚本都遵循相同原则：
+
+| 机制 | 行为 |
+|---|---|
+| 失败即中止 | 补丁未命中就不写入 |
+| 语法校验 | 写入前执行 `node --check` |
+| 先备份 | 当前 `zcode.cjs` 归档到 `backups/`，保留最近若干份 |
+| 原版保鲜 | 未打补丁时刷新 `zcode.cjs.bak`，避免 `restore` 把应用降级 |
+| 保留权限 | Linux 版通过 sudo 写入后恢复原文件的 uid / gid / mode |
+| 不入库 | `backups/`、`*.bak`、`zcode-dir.txt` 由 `.gitignore` 排除 |
+
+若部署后出现「初始化失败」，先执行 `./deploy-linux.sh restore` 并重启 ZCode；原始安装文件仍可从 `zcode.cjs.bak` 或 `backups/` 恢复。
+
+---
+
+## 5. 验证与排障
+
+Linux 版：
+
+```bash
+./deploy-linux.sh status   # 是否部署、人格路径、备份状态
+./deploy-linux.sh verify   # 注入表达式能否读到人格、三个片段结构是否保留、语法是否通过
+./deploy-linux.sh diag     # 打印 cjs 内全部 name/source/injectionTarget 片段
+```
+
+Windows 版可运行 `验证.bat`：先 `deploy.ps1 diag`，再 `verify-patch.cjs` 执行补丁后的函数。注意 `verify-patch.cjs` 检查的是六补丁结果，不适用于 Linux 双补丁部署。
+
+也可以查看模型请求日志：
+
+```text
+~/.zcode/cli/rollout/model-io-*.jsonl
+```
+
+检查 system 层是否包含 `人格.txt` 内容，以及是否还带有产品身份声明或其他注入片段。
+
+---
+
+## 6. 文件清单
+
+| 文件 | 用途 |
+|---|---|
+| `ZCode-Deploy/deploy-linux.js` | Ubuntu / Linux 主脚本：install / restore / status / diag / verify |
+| `ZCode-Deploy/deploy-linux.sh` | Linux 一键入口 |
+| `ZCode-Deploy/deploy.ps1` | Windows PowerShell 主脚本 |
+| `ZCode-Deploy/部署.bat` / `恢复.bat` / `查看状态.bat` / `验证.bat` | Windows 批处理入口 |
+| `ZCode-Deploy/verify-patch.cjs` | Windows 六补丁功能验证器 |
+| `ZCode-Deploy/人格.txt` | 人格 / system prompt 内容 |
+| `ZCode-Deploy/build-release.ps1` | Windows 发布打包与 SHA256 清单 |
+| `ZCode-Deploy/修改记录.md` | 上游补丁分析与变更记录 |
+| `ZCode-Deploy/backups/` | 本机自动生成的原版/补丁归档，不入库 |
+
+---
+
+## 7. 版本演进
+
+| 能力 | 原仓库 v1 | 上游 v2 | 本仓库 |
+|---|---|---|---|
+| 锚点定位 | 压缩变量名硬编码 | 语义字面量 + 花括号配平 | 沿用，兼容 Linux bundle 的两种 `customSystemPrompt` 写法 |
+| 补丁失败 | 警告后仍写入 | 中止、退出码 1、诊断 | 沿用 |
+| 写入前校验 | 无 | `node --check` | 沿用 |
+| 备份 | 固定 `.bak` | 自动刷新、轮转 | 沿用并排除入库 |
+| 验证 | 人工翻日志 | `verify-patch.cjs` | Linux 增加 `status/verify/diag` |
+| Ubuntu | 不支持 | 不支持 | 双补丁部署，保留会话初始化结构 |
+
+---
 
 ## 免责声明
 
-本工具仅用于修改本地安装的软件配置。请遵守 ZCode 服务条款，自行承担使用风险。
+本工具仅修改本地安装的软件文件；请遵守 ZCode 服务条款，自行承担使用与升级兼容风险。
