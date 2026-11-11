@@ -1,0 +1,6 @@
+# 本机 ZCode 原版/补丁归档，体积较大且因人而异，不入库
+backups/
+*.bak
+
+# 本机部署路径缓存
+zcode-dir.txt

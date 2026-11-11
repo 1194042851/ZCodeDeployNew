@@ -30,6 +30,42 @@ tools:    工具定义（不变）
 
 ## 使用
 
+### Ubuntu / Linux（本机已适配）
+
+1. （可选）把 `人格.txt` 换成你自己的词（UTF-8）
+2. 在 `ZCode-Deploy/` 目录下执行 `./deploy-linux.sh install`
+3. 重启 ZCode，开新对话生效
+
+```bash
+cd ZCode-Deploy
+./deploy-linux.sh install    # 部署（写入 /opt 时可能需要 sudo）
+./deploy-linux.sh status     # 查看状态
+./deploy-linux.sh verify     # 功能验证
+./deploy-linux.sh restore    # 恢复原版
+./deploy-linux.sh diag       # 注入点诊断
+```
+
+也可直接调用 Node 入口：
+
+```bash
+node deploy-linux.js install
+```
+
+Linux 版会按 `ZCODE_DIR` / `ZCODE_CJS` / `ZCODE_PERSONA` 定位目标和人格文件，
+默认探测 `/opt/ZCode/resources/glm/zcode.cjs`。写入系统安装目录时可通过
+`SUDO_PASSWORD` 提供 sudo 密码，或让脚本交互提示。原版会归档到 `backups/`
+并刷新 `zcode.cjs.bak`；这些备份文件不会入库。
+
+**重要兼容性说明**：本机 ZCode 3.17.2（Linux）在恢复会话时依赖 Current Date /
+Skills / Request User Context 三个片段的结构。Windows v2 的六补丁版本会把
+这些函数直接改成 `return null;`，实测导致 `Cannot read properties of null
+(reading 'length')`，界面显示「初始化失败，暂时无法发送」。因此 Linux 版只做
+两个补丁：清空 CLI Prefix 产品身份声明 + 把 `customSystemPrompt` 指向
+`人格.txt`。后者仍会让 ZCode 跳过 System Context / Environment Info / Memory /
+Agent Identity 等大部分注入，但保留了会话初始化所需结构。
+
+### Windows
+
 1. （可选）把 `人格.txt` 换成你自己的词（UTF-8）
 2. 双击 `部署.bat`
 3. 开新对话，生效
@@ -119,15 +155,17 @@ System Context / Environment Info / Memory 等片段，所以一个补丁就清�
 ## 文件说明
 
 ```
-部署.bat            一键部署
-恢复.bat            恢复原版
-查看状态.bat        查状态
-验证.bat            诊断 + 功能验证
-deploy.ps1          主脚本（install / restore / status / diag）
-verify-patch.cjs    功能验证器（真正执行补丁后的函数）
+部署.bat            Windows 一键部署
+恢复.bat            Windows 恢复原版
+查看状态.bat        Windows 查状态
+验证.bat            Windows 诊断 + 功能验证
+deploy.ps1          Windows 主脚本（install / restore / status / diag）
+verify-patch.cjs    Windows 版功能验证器（检查六补丁）
+deploy-linux.js     Ubuntu / Linux 主脚本（install / restore / status / diag / verify）
+deploy-linux.sh     Ubuntu / Linux 一键入口
 人格.txt            人格文件（唯一编辑入口）
-backups             原版归档目录（保留最近 6 份，restore 失败时可手动挑）
-zcode-dir.txt       上次检测到的 ZCode 目录缓存
+backups             原版归档目录（保留最近 7 份，不入库）
+zcode-dir.txt       上次检测到的 ZCode 目录缓存（不入库）
 修改记录.md         完整技术分析与变更记录
 ```
 
@@ -147,6 +185,7 @@ https://github.com/zzooymc-source/ZCode-Deploy
 | 备份策略 | `.bak` 固定为首次部署版本 | 自动刷新，restore 不再降级应用 |
 | 验证手段 | 人工翻模型请求日志 | `verify-patch.cjs` 真正执行补丁后的函数 |
 | 发布流程 | 手动打包 | `build-release.ps1` 白名单打包 + SHA256 清单 |
+| Ubuntu / Linux | 未支持 | `deploy-linux.js` / `deploy-linux.sh`，双补丁保留会话初始化结构 |
 
 ## 免责声明
 
